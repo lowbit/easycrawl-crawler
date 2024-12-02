@@ -1,5 +1,5 @@
 import { crawlWebsite } from './crawlers/crawler.js';
-import { processCrawlJobs, finishCrawlJob } from './db.js';
+import { processCrawlJobs, finishCrawlJob } from './db/db.js';
 
 (async () => {
     const websiteCrawlerConfig = await processCrawlJobs();

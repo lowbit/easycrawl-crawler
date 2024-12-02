@@ -1,7 +1,7 @@
 import puppeteer from 'puppeteer';
 import { setTimeout } from "node:timers/promises";
 import dotenv from 'dotenv';
-import { failCrawlJob, insertCrawlError } from '../db.js';
+import { failCrawlJob, insertCrawlError } from '../db/db.js';
 
 export async function crawlWebsite(crawlConfig) {
   dotenv.config();
