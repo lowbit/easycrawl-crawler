@@ -27,7 +27,8 @@ export async function crawlWebsite(crawlConfig) {
     while (currentPage <= pageLimit && hasNextPage) {
       let currentPageUrl = page.url();
 
-      if (crawlConfig.infinite_scroll) {
+      if (crawlConfig.use_infinite_scroll) {
+        console.log('Using infinite scroll...');
         // For infinite scroll, we'll scroll and wait for new content
         const previousHeight = await page.evaluate(
           "document.documentElement.scrollHeight"
