@@ -1,5 +1,12 @@
 import { crawlWebsite } from "./crawlers/crawler.js";
-import { finishCrawlJob, insertItems, processCrawlJobs } from "./db/db.js";
+import {
+  finishCrawlJob,
+  insertItems,
+  processCrawlJobs,
+  startCrawlJob,
+  failCrawlJob,
+  insertCrawlError,
+} from "./db/db.js";
 import { testDatabaseConnection } from "./db/connection.js";
 import dotenv from "dotenv";
 
@@ -9,8 +16,7 @@ dotenv.config();
 // Track running jobs by website
 const runningWebsites = new Set();
 const CHECK_INTERVAL = parseInt(process.env.CHECK_INTERVAL || "5000");
-const MAX_CONCURRENT_JOBS = 5;
-const MAX_RETRIES = 3;
+const MAX_CONCURRENT_JOBS = parseInt(process.env.MAX_CONCURRENT_JOBS || 5);
 
 async function processJob(crawlerConfig) {
   try {
@@ -36,12 +42,6 @@ async function processJob(crawlerConfig) {
   } catch (error) {
     console.error(`Error processing job ${crawlerConfig.job_id}:`, error);
     await failCrawlJob(crawlerConfig.job_id);
-    await insertCrawlError(
-      crawlerConfig.job_id,
-      crawlerConfig.website_code,
-      crawlerConfig.code,
-      error
-    );
   } finally {
     runningWebsites.delete(crawlerConfig.website_code);
   }
@@ -51,18 +51,12 @@ async function checkAndProcessJobs() {
   try {
     if (runningWebsites.size < MAX_CONCURRENT_JOBS) {
       const availableJobs = [];
-      let websiteCrawlerConfig;
-
-      while (
-        (websiteCrawlerConfig = await processCrawlJobs()) !== null &&
-        runningWebsites.size < MAX_CONCURRENT_JOBS &&
-        !runningWebsites.has(websiteCrawlerConfig.website_code)
-      ) {
+      let websiteCrawlerConfig = await processCrawlJobs();
+      if (websiteCrawlerConfig !=null) {
+        websiteCrawlerConfig = await startCrawlJob(websiteCrawlerConfig);
         availableJobs.push(websiteCrawlerConfig);
+        availableJobs.map((config) => processJob(config));
       }
-
-      const jobPromises = availableJobs.map((config) => processJob(config));
-      await Promise.allSettled(jobPromises);
     }
   } catch (error) {
     console.error("Error in checkAndProcessJobs:", error);

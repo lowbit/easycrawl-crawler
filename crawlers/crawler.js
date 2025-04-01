@@ -27,49 +27,6 @@ export async function crawlWebsite(crawlConfig) {
     while (currentPage <= pageLimit && hasNextPage) {
       let currentPageUrl = page.url();
 
-      if (crawlConfig.use_infinite_scroll) {
-        console.log('Using infinite scroll...');
-        // For infinite scroll, we'll scroll and wait for new content
-        const previousHeight = await page.evaluate(
-          "document.documentElement.scrollHeight"
-        );
-        await page.evaluate(
-          "window.scrollTo(0, document.documentElement.scrollHeight)"
-        );
-
-        // Wait for potential new content to load
-        try {
-          await page.waitForFunction(
-            `document.documentElement.scrollHeight > ${previousHeight}`,
-            { timeout: 5000 }
-          );
-          // Additional wait for content to render
-          await setTimeout(1000);
-        } catch (e) {
-          // If no height change after scroll, assume we've reached the end
-          hasNextPage = false;
-        }
-      } else if (crawlConfig.use_next_page_button) {
-        // Existing next page button logic
-        const nextPageButton = await page.$(crawlConfig.next_page_button_sel);
-        if (!nextPageButton) {
-          hasNextPage = false;
-        } else {
-          await nextPageButton.click();
-          await page.waitForNavigation({
-            waitUntil: "domcontentloaded",
-            timeout: 30000,
-          });
-        }
-      } else {
-        // Existing URL-based pagination logic
-        currentPageUrl = `${crawlConfig.start_url}?page=${currentPage + 1}`;
-        await page.goto(currentPageUrl, {
-          waitUntil: "domcontentloaded",
-          timeout: 30000,
-        });
-      }
-
       // Get all items currently on the page
       const itemsOnPage = await page.evaluate(
         (crawlConfig, currentPage) => {
@@ -155,6 +112,8 @@ export async function crawlWebsite(crawlConfig) {
         currentPage
       );
 
+      
+
       // Check if we found any new items
       const newItems = itemsOnPage.filter(
         (newItem) =>
@@ -175,6 +134,81 @@ export async function crawlWebsite(crawlConfig) {
         console.log("Total items so far: " + allItems.length);
         console.log("Sleeping for " + randomTimeout + " ms");
         await setTimeout(randomTimeout);
+      }
+
+      if (crawlConfig.use_infinite_scroll) {
+        console.log("Using infinite scroll...");
+
+        // Store the current item count to check if new items were loaded
+        const currentItemCount = allItems.length;
+
+        // For infinite scroll, scroll down and wait longer for content to load
+        const previousHeight = await page.evaluate(
+          "document.documentElement.scrollHeight"
+        );
+
+        // Scroll to bottom
+        await page.evaluate(
+          "window.scrollTo(0, document.documentElement.scrollHeight)"
+        );
+
+        // Wait a bit longer for the content to load (increased from 5000ms to 8000ms)
+        try {
+          // First try to detect by height change
+          await page.waitForFunction(
+            `document.documentElement.scrollHeight > ${previousHeight}`,
+            { timeout: 8000 }
+          );
+
+          // Additional wait for content to render fully
+          await setTimeout(2000);
+        } catch (e) {
+          console.log(
+            "No immediate height change detected, checking for new items anyway..."
+          );
+
+          // Even if no height change, check if new items appeared
+          const checkForNewItems = await page.evaluate((crawlConfig) => {
+            const currentItems = document.querySelectorAll(
+              crawlConfig.all_items_sel
+            ).length;
+            return currentItems;
+          }, crawlConfig);
+
+          // If we don't have new items after scrolling, we've likely reached the end
+          if (checkForNewItems <= itemsOnPage.length) {
+            console.log("No new items found after scrolling, ending crawl");
+            hasNextPage = false;
+          } else {
+            // There are new items, keep going
+            console.log(
+              `Found ${
+                checkForNewItems - itemsOnPage.length
+              } more items after scrolling`
+            );
+            // Give extra time for rendering
+            await setTimeout(2000);
+          }
+        }
+      } else if (crawlConfig.use_next_page_button) {
+        // Existing next page button logic
+        const nextPageButton = await page.$(crawlConfig.next_page_button_sel);
+        if (!nextPageButton) {
+          hasNextPage = false;
+        } else {
+          await nextPageButton.click();
+          await page.waitForNavigation({
+            waitUntil: "domcontentloaded",
+            timeout: 30000,
+          });
+        }
+      } else if (crawlConfig.use_url_page_parameter) {
+        // Existing URL-based pagination logic
+        currentPageUrl = `${crawlConfig.start_url}${crawlConfig.url_page_parameter}${currentPage}`;
+        await page.goto(currentPageUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 30000,
+        });
       }
     }
 

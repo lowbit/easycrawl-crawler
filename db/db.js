@@ -118,7 +118,7 @@ export async function insertCrawlError(jobId, website, category, err) {
 export async function processCrawlJobs() {
   return executeWithRetry(async (client) => {
     try {
-      // Only exclude websites that are currently running
+      // Only exclude websites that are currently running (1 job per domain)
       const awaitingCrawlJobsQuery = await client.query(
         `SELECT * FROM crawler_job cj
                  WHERE status = $1 
@@ -147,18 +147,6 @@ export async function processCrawlJobs() {
           crawlerConfig.job_id = job.id;
           crawlerConfig.test_run = job.test_run;
           crawlerConfig.website_code = job.website_code;
-
-          // Update job status to Running
-          await client.query(
-            `UPDATE crawler_job 
-                         SET status = $1, 
-                             started_at = NOW(), 
-                             modified = NOW(), 
-                             modified_by = $3 
-                         WHERE id = $2`,
-            ["Running", job.id, "SYSTEM"]
-          );
-
           return crawlerConfig;
         }
       }
@@ -170,6 +158,16 @@ export async function processCrawlJobs() {
   });
 }
 
+export async function startCrawlJob(websiteCrawlerConfig) {
+  return executeWithRetry(async (client) => {
+    await client.query(
+      `UPDATE crawler_job SET status = $1, started_at = NOW(), modified = NOW(), modified_by = $3 WHERE id = $2`,
+      ["Running", websiteCrawlerConfig.job_id, "SYSTEM"]
+    );
+    websiteCrawlerConfig.status = 'Running';
+    return websiteCrawlerConfig;
+  });
+}
 export async function finishCrawlJob(id) {
   return executeWithRetry(async (client) => {
     await client.query(
