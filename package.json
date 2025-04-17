@@ -1,7 +1,7 @@
 {
     "type": "module",
     "scripts": {
-        "start": "node crawl.js",
+        "dev": "node crawl.js",
         "test": "node test.js"
     },
     "dependencies": {
