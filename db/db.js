@@ -1,7 +1,7 @@
 import format from "pg-format";
 import { pool, executeWithRetry } from "./connection.js";
 
-export async function insertItems(config_code, items, job_id, website_code) {
+export async function insertItems(config_code, items, job_id, source) {
   return executeWithRetry(async (client) => {
     try {
       await client.query("BEGIN");
@@ -86,24 +86,31 @@ export async function insertItems(config_code, items, job_id, website_code) {
       });
 
       // Update job status to Failed
-      await failCrawlJob(job_id);
+      await failJob(job_id);
 
-      // Insert error into crawler_error
-      await insertCrawlError(job_id, website_code, config_code, err);
+      // Insert error into job_error
+      await insertJobError(job_id, source, config_code, "CRAWL", err);
 
       throw err;
     }
   });
 }
 
-export async function insertCrawlError(jobId, website, category, err) {
+export async function insertJobError(jobId, source, category, jobType, err) {
   return executeWithRetry(async (client) => {
     try {
       await client.query("BEGIN");
-      const errorDetails = [website, category, err.message, new Date(), jobId];
+      const errorDetails = [
+        source,
+        category,
+        jobType,
+        err.message,
+        new Date(),
+        jobId,
+      ];
       console.log("Inserting error details into database:", errorDetails);
       await client.query(
-        "INSERT INTO crawler_error (website, category, error, created, job_id) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO job_error (source, category, job_type, error, created, job_id) VALUES ($1, $2, $3, $4, $5, $6)",
         errorDetails
       );
       await client.query("COMMIT");
@@ -118,24 +125,27 @@ export async function insertCrawlError(jobId, website, category, err) {
 export async function processCrawlJobs() {
   return executeWithRetry(async (client) => {
     try {
+      // Only look for CRAWL type jobs
       // Only exclude websites that are currently running (1 job per domain)
-      const awaitingCrawlJobsQuery = await client.query(
-        `SELECT * FROM crawler_job cj
+      const awaitingJobsQuery = await client.query(
+        `SELECT * FROM job
                  WHERE status = $1 
+                 AND job_type = 'CRAWL'
                  AND NOT EXISTS (
                      SELECT 1 
-                     FROM crawler_job running
-                     WHERE running.website_code = cj.website_code 
+                     FROM job running
+                     WHERE running.website_code = job.website_code 
                      AND running.status = $2
+                     AND running.job_type = 'CRAWL'
                  )
                  ORDER BY id ASC 
                  LIMIT 1`,
         ["Created", "Running"]
       );
 
-      if (awaitingCrawlJobsQuery.rowCount > 0) {
-        const job = awaitingCrawlJobsQuery.rows[0];
-        console.log("Processing job:", job);
+      if (awaitingJobsQuery.rowCount > 0) {
+        const job = awaitingJobsQuery.rows[0];
+        console.log(`Processing CRAWL job:`, job);
 
         const crawlerConfigQuery = await client.query(
           "SELECT * FROM crawler_config WHERE code = $1",
@@ -147,41 +157,50 @@ export async function processCrawlJobs() {
           crawlerConfig.job_id = job.id;
           crawlerConfig.test_run = job.test_run;
           crawlerConfig.website_code = job.website_code;
+          crawlerConfig.job_type = job.job_type;
           return crawlerConfig;
         }
       }
       return null;
     } catch (err) {
-      console.error("Error processing crawl jobs:", err);
+      console.error(`Error processing CRAWL jobs:`, err);
       return null;
     }
   });
 }
 
-export async function startCrawlJob(websiteCrawlerConfig) {
+export async function startJob(job) {
   return executeWithRetry(async (client) => {
     await client.query(
-      `UPDATE crawler_job SET status = $1, started_at = NOW(), modified = NOW(), modified_by = $3 WHERE id = $2`,
-      ["Running", websiteCrawlerConfig.job_id, "SYSTEM"]
+      `UPDATE job SET status = $1, started_at = NOW(), modified = NOW(), modified_by = $3 WHERE id = $2`,
+      ["Running", job.job_id || job.id, "SYSTEM"]
     );
-    websiteCrawlerConfig.status = 'Running';
-    return websiteCrawlerConfig;
+    job.status = "Running";
+    return job;
   });
 }
-export async function finishCrawlJob(id) {
+
+export async function finishJob(id) {
   return executeWithRetry(async (client) => {
     await client.query(
-      "UPDATE crawler_job SET status = $1, finished_at = NOW(), modified = NOW(), modified_by = $3 WHERE id = $2",
+      "UPDATE job SET status = $1, finished_at = NOW(), modified = NOW(), modified_by = $3 WHERE id = $2",
       ["Finished", id, "SYSTEM"]
     );
   });
 }
 
-export async function failCrawlJob(id) {
+export async function failJob(id) {
   return executeWithRetry(async (client) => {
     await client.query(
-      "UPDATE crawler_job SET status = $1, finished_at = NOW(), modified = NOW(), modified_by = $3 WHERE id = $2",
+      "UPDATE job SET status = $1, finished_at = NOW(), modified = NOW(), modified_by = $3 WHERE id = $2",
       ["Failed", id, "SYSTEM"]
     );
   });
 }
+
+// Aliases for backward compatibility
+export const startCrawlJob = startJob;
+export const finishCrawlJob = finishJob;
+export const failCrawlJob = failJob;
+export const insertCrawlError = (jobId, website, category, err) =>
+  insertJobError(jobId, website, category, "CRAWL", err);

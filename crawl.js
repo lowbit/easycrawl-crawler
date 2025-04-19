@@ -1,11 +1,11 @@
 import { crawlWebsite } from "./crawlers/crawler.js";
 import {
-  finishCrawlJob,
+  finishJob,
   insertItems,
   processCrawlJobs,
-  startCrawlJob,
-  failCrawlJob,
-  insertCrawlError,
+  startJob,
+  failJob,
+  insertJobError,
 } from "./db/db.js";
 import { testDatabaseConnection } from "./db/connection.js";
 import dotenv from "dotenv";
@@ -18,44 +18,45 @@ const runningWebsites = new Set();
 const CHECK_INTERVAL = parseInt(process.env.CHECK_INTERVAL || "5000");
 const MAX_CONCURRENT_JOBS = parseInt(process.env.MAX_CONCURRENT_JOBS || 5);
 
-async function processJob(crawlerConfig) {
+// Process crawler job
+async function processCrawlerJob(jobConfig) {
   try {
     console.log(
-      `Starting job ${crawlerConfig.job_id} for website ${crawlerConfig.website_code}`
+      `Starting crawler job ${jobConfig.job_id} for website ${jobConfig.website_code}`
     );
-    runningWebsites.add(crawlerConfig.website_code);
+    runningWebsites.add(jobConfig.website_code);
 
-    if (crawlerConfig.test_run) {
-      crawlerConfig.max_pages = 2;
+    if (jobConfig.test_run) {
+      jobConfig.max_pages = 2;
     }
 
-    const items = await crawlWebsite(crawlerConfig);
+    const items = await crawlWebsite(jobConfig);
     if (items != null && items.length > 0) {
       await insertItems(
-        crawlerConfig.code,
+        jobConfig.code,
         items,
-        crawlerConfig.job_id,
-        crawlerConfig.website_code
+        jobConfig.job_id,
+        jobConfig.website_code
       );
-      await finishCrawlJob(crawlerConfig.job_id);
+      await finishJob(jobConfig.job_id);
+      console.log(`Successfully completed crawler job ${jobConfig.job_id}`);
     }
   } catch (error) {
-    console.error(`Error processing job ${crawlerConfig.job_id}:`, error);
-    await failCrawlJob(crawlerConfig.job_id);
+    console.error(`Error processing crawler job ${jobConfig.job_id}:`, error);
+    await failJob(jobConfig.job_id);
   } finally {
-    runningWebsites.delete(crawlerConfig.website_code);
+    runningWebsites.delete(jobConfig.website_code);
   }
 }
 
 async function checkAndProcessJobs() {
   try {
     if (runningWebsites.size < MAX_CONCURRENT_JOBS) {
-      const availableJobs = [];
-      let websiteCrawlerConfig = await processCrawlJobs();
-      if (websiteCrawlerConfig !=null) {
-        websiteCrawlerConfig = await startCrawlJob(websiteCrawlerConfig);
-        availableJobs.push(websiteCrawlerConfig);
-        availableJobs.map((config) => processJob(config));
+      // Only get CRAWL jobs
+      const crawlerJob = await processCrawlJobs();
+      if (crawlerJob) {
+        const startedJob = await startJob(crawlerJob);
+        processCrawlerJob(startedJob);
       }
     }
   } catch (error) {
